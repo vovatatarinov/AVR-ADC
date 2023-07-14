@@ -120,9 +120,12 @@ int main() {
   UART_Init();
   timer_init();
   while(1) {
-    ADC_result adc_result_c = adc_result;
-    if (adc_result_c.notSent) {
+    if (adc_result.notSent) {
+      uint8_t oldSREG = SREG;
+      cli();
       adc_result.notSent = 0;
+      ADC_result adc_result_c = adc_result;
+      SREG = oldSREG; 
       itoa(adc_result_c.micros, str_buf, 10);
       UART_puts(str_buf);
       UART_putc('\t');
