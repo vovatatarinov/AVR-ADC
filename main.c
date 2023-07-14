@@ -1,5 +1,6 @@
 #include <avr/io.h>
 #include <avr/pgmspace.h>
+#include <avr/interrupt.h>
 #include <util/delay.h>
 #include <stdint.h>
 
@@ -7,12 +8,44 @@
 //F_CPU должен быть задан в параметрах компилятора.
 
 #define UART_puts_P(__strP) UART_puts_p(PSTR(__strP)) //Вывод строк напрямую из памяти прошивки, минуя стек.
+#define DEF_OCR2A_MICROS (F_CPU/500000 - 1) / 2 //Значение OCR2A для micros.
 
 typedef struct {
   uint32_t micros;
   uint8_t data;
 } ADC_result;
 
+static volatile uint32_t micros_timer;
+
+ISR (TIMER2_COMPA_vect) {
+   uint32_t m = micros_timer;
+   ++m;
+   micros_timer = m;
+}
+
+void timer_init(void) {
+   cli();
+   //Timer2 Init
+   micros_timer = 0;
+   TCCR2B = 0b00000001;  // x1
+   TCCR2A = 0b00000010;  //CTC mode
+   TIMSK2 |= (1<<OCIE2A);
+   OCR2A = DEF_OCR2A_MICROS; // F_CPU / (Prescaler * (OCR2A + 1) ) = 1000000. Toogle interrupt at every microsecond.
+   sei();
+}
+
+
+uint32_t micros() {
+  uint32_t m;
+  uint8_t oldSREG = SREG;
+
+  //Отключим прерывания, иначе можем получить не то значение. (Прерывание во время чтения переменной)
+  cli();
+  m = micros_timer;
+  SREG = oldSREG; //Верните на место старый SREG... Мы не знаем, были ли включены прерывания до вызова функции.
+
+  return m;
+}
 
 void UART_Init() {
   /*Set baud rate */
@@ -53,7 +86,9 @@ void UART_puts_p(const char* s) {
 
 int main() {
   DDRC = 0x00; //Весь PORTC в режиме входа.
+  micros_timer = 0;
   UART_Init();
+  timer_init();
   
   while(1) {
     
