@@ -2,6 +2,7 @@
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
+#include <stdlib.h>
 #include <stdint.h>
 
 //Use UTF-8.
@@ -13,14 +14,25 @@
 typedef struct {
   uint32_t micros;
   uint8_t data;
+  uint8_t notSent;
 } ADC_result;
 
 static volatile uint32_t micros_timer;
+static volatile ADC_result adc_result;
+static char str_buf[32];
 
 ISR (TIMER2_COMPA_vect) {
    uint32_t m = micros_timer;
    ++m;
    micros_timer = m;
+}
+
+ISR(ADC_vect)
+{
+  //Здесь можем смело читать micros_timer, не запрещая прерывания
+  adc_result.micros = micros_timer;
+  adc_result.data = ADCH;
+  adc_result.notSent = 1;
 }
 
 void timer_init(void) {
@@ -83,14 +95,40 @@ void UART_puts_p(const char* s) {
       UART_putc(pgm_read_byte(s++));
 }
 
+void ADC_Init(void) {
+
+  ADCSRA |= (0<<ADEN) // Разрешение использования АЦП. Пока не включаем.
+  |(1 << ADATE) //ADC Auto Trigger Enable
+  |(1 << ADIE) //Разрешаем прерывания для АЦП
+  
+  |(1<<ADPS2)|(0<<ADPS1)|(0<<ADPS0);//Делитель 16 = 1 МГц
+  
+  ADMUX = 0; //Выберем ADC0 канал
+  ADMUX |= (0<<REFS1)|(1<<REFS0); //Используем напряжение питания, на AREF есть конденсатор.
+  ADMUX |= (1 << ADLAR); //Меняем порядок байтов результата АЦП.
+  
+  ADCSRB = 0x00; //режим Free Running
+  ADCSRA |= (1<<ADEN); //Включили АЦП.
+}
 
 int main() {
   DDRC = 0x00; //Весь PORTC в режиме входа.
   micros_timer = 0;
+  adc_result.micros = 0;
+  adc_result.data = 0;
+  adc_result.notSent = 0;
   UART_Init();
   timer_init();
-  
   while(1) {
-    
+    ADC_result adc_result_c = adc_result;
+    if (adc_result_c.notSent) {
+      adc_result.notSent = 0;
+      itoa(adc_result_c.micros, str_buf, 10);
+      UART_puts(str_buf);
+      UART_putc('\t');
+      itoa(adc_result_c.data, str_buf, 10);
+      UART_puts(str_buf);
+      UART_putc('\n');
+    }
   }
 }
