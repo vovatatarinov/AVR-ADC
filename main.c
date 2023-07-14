@@ -31,6 +31,7 @@ ISR(ADC_vect)
 {
   //Здесь можем смело читать micros_timer, не запрещая прерывания
   adc_result.micros = micros_timer;
+  UART_puts_P("Read!\n");
   adc_result.data = ADCH;
   adc_result.notSent = 1;
 }
@@ -96,8 +97,8 @@ void UART_puts_p(const char* s) {
 }
 
 void ADC_Init(void) {
-
-  ADCSRA |= (0<<ADEN) // Разрешение использования АЦП. Пока не включаем.
+  
+  ADCSRA |= (1<<ADEN) // Разрешение использования АЦП. Пока не включаем.
   |(1 << ADATE) //ADC Auto Trigger Enable
   |(1 << ADIE) //Разрешаем прерывания для АЦП
   
@@ -108,7 +109,8 @@ void ADC_Init(void) {
   ADMUX |= (1 << ADLAR); //Меняем порядок байтов результата АЦП.
   
   ADCSRB = 0x00; //режим Free Running
-  ADCSRA |= (1<<ADEN); //Включили АЦП.
+  //ADCSRA |= (1<<ADEN); //Включили АЦП.
+  ADCSRA |= (1<<ADSC); //Начинаем преобразование
 }
 
 int main() {
@@ -118,8 +120,15 @@ int main() {
   adc_result.data = 0;
   adc_result.notSent = 0;
   UART_Init();
+  ADC_Init();
   timer_init();
+  
+  
+  UART_puts_P("Hello!\n");
   while(1) {
+    ltoa(micros(), str_buf, 10);
+    UART_puts(str_buf);
+    UART_putc('\n');
     if (adc_result.notSent) {
       uint8_t oldSREG = SREG;
       cli();
@@ -128,7 +137,7 @@ int main() {
       SREG = oldSREG; 
       itoa(adc_result_c.micros, str_buf, 10);
       UART_puts(str_buf);
-      UART_putc('\t');
+      UART_puts_P("    ");
       itoa(adc_result_c.data, str_buf, 10);
       UART_puts(str_buf);
       UART_putc('\n');
