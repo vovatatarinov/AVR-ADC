@@ -9,10 +9,9 @@
 //F_CPU должен быть задан в параметрах компилятора.
 
 #define UART_puts_P(__strP) UART_puts_p(PSTR(__strP)) //Вывод строк напрямую из памяти прошивки, минуя стек.
-#define DEF_OCR2A_MICROS (F_CPU/500000 - 1) / 2 //Значение OCR2A для micros.
 
 typedef struct {
-  uint64_t micros;
+  uint32_t micros;
   uint8_t data;
   uint8_t notSent;
 } ADC_result;
@@ -21,7 +20,7 @@ static volatile uint32_t micros_timer;
 static ADC_result adc_result;
 static char str_buf[32];
 
-ISR (TIMER2_COMPA_vect) {
+ISR (TIMER2_OVF_vect) {
    uint32_t m = micros_timer;
    ++m;
    micros_timer = m;
@@ -30,7 +29,10 @@ ISR (TIMER2_COMPA_vect) {
 ISR(ADC_vect)
 {
   //Здесь можем смело читать micros_timer, не запрещая прерывания
-  adc_result.micros = micros_timer;
+  uint8_t getTCNT2 = TCNT2;
+  getTCNT2 >>= 1; // Делим на 2
+  //micros_timer нужно сдвинуть на байт влево, а затем вернуть на бит вправо для деления на 2
+  adc_result.micros = (micros_timer << 7) + getTCNT2;
   adc_result.data = ADCH;
   adc_result.notSent = 1;
 }
@@ -47,26 +49,13 @@ void timer_init(void) {
   //Количество микросекунд будем находить сдвигом счетчика переполнения
   //таймера на 8 бит влево,
   //а затем прибавлять значение регистра TCNT2.
-  //Необходимое значение делителя равно 16.
+  //Необходимое значение делителя равно 8.
+  //Получим количество микросекунд, умноженное на 2
    micros_timer = 0;
-   TCCR2B = 0b00000001;  // x1
-   TCCR2A = 0b00000010;  //CTC mode
-   TIMSK2 |= (1<<OCIE2A);
-   OCR2A = DEF_OCR2A_MICROS; // F_CPU / (Prescaler * (OCR2A + 1) ) = 1000000. Toogle interrupt at every microsecond.
+   TCCR2B = 0b00000010;  // x8
+   TCCR2A = 0b00000000;  //Normal mode
+   TIMSK2 |= (1<<TOIE2);
    sei();
-}
-
-
-uint32_t micros() {
-  uint32_t m;
-  uint8_t oldSREG = SREG;
-
-  //Отключим прерывания, иначе можем получить не то значение. (Прерывание во время чтения переменной)
-  cli();
-  m = micros_timer;
-  SREG = oldSREG; //Верните на место старый SREG... Мы не знаем, были ли включены прерывания до вызова функции.
-
-  return m;
 }
 
 void UART_Init() {
@@ -135,7 +124,7 @@ int main() {
   adc_result.data = 0;
   adc_result.notSent = 0;
   UART_Init();
-  //timer_init(); 
+  timer_init(); 
   ADC_Init();
   UART_puts_P("Hello!\n");
   while(1) {
@@ -144,7 +133,7 @@ int main() {
       cli();
       ADC_result adc_result_c = adc_result;
       sei();
-      itoa(adc_result_c.micros, str_buf, 10);
+      ltoa(adc_result_c.micros, str_buf, 10);
       UART_puts(str_buf);
       UART_puts_P("    ");
       itoa(adc_result_c.data, str_buf, 10);
