@@ -16,6 +16,12 @@ typedef struct {
   uint8_t notSent;
 } ADC_result;
 
+typedef struct
+{
+    uint32_t quot;
+    uint8_t rem;
+} divmod10_t;
+
 static volatile uint32_t micros_timer;
 static ADC_result adc_result;
 static char str_buf[32];
@@ -99,6 +105,41 @@ void UART_puts_p(const char* s) {
       UART_putc(pgm_read_byte(s++));
 }
 
+inline static divmod10_t divmodu10(uint32_t n) {
+    divmod10_t res;
+// умножаем на 0.8
+    res.quot = n >> 1;
+    res.quot += res.quot >> 1;
+    res.quot += res.quot >> 4;
+    res.quot += res.quot >> 8;
+    res.quot += res.quot >> 16;
+    uint32_t qq = res.quot;
+// делим на 8
+    res.quot >>= 3;
+// вычисляем остаток
+    res.rem = (uint8_t)(n - ((res.quot << 1) + (qq & ~7ul)));
+// корректируем остаток и частное
+    if(res.rem > 9)
+    {
+        res.rem -= 10;
+        res.quot++;
+    }
+    return res;
+}
+
+char* utoa_fast_div(uint32_t value, char *buffer) {
+    buffer += 11;
+    *--buffer = 0;
+    do
+    {
+        divmod10_t res = divmodu10(value);
+        *--buffer = res.rem + '0';
+        value = res.quot;
+    }
+    while (value != 0);
+    return buffer;
+}
+
 void ADC_Init(void) {
   cli();
   ADCSRA |= (1<<ADEN) // Разрешение использования АЦП. Пока не включаем.
@@ -133,11 +174,9 @@ int main() {
       cli();
       ADC_result adc_result_c = adc_result;
       sei();
-      ltoa(adc_result_c.micros, str_buf, 10);
-      UART_puts(str_buf);
+      UART_puts(utoa_fast_div(adc_result_c.micros, str_buf));
       UART_puts_P("    ");
-      itoa(adc_result_c.data, str_buf, 10);
-      UART_puts(str_buf);
+      UART_puts(utoa_fast_div(adc_result_c.data, str_buf));
       UART_putc('\n');
     }
   }
