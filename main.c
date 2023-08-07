@@ -23,7 +23,7 @@ typedef struct
 } divmod10_t;
 
 static volatile uint32_t micros_timer;
-static ADC_result adc_result;
+static volatile ADC_result adc_result;
 static char str_buf[32];
 
 ISR (TIMER2_OVF_vect) {
@@ -32,8 +32,7 @@ ISR (TIMER2_OVF_vect) {
    micros_timer = m;
 }
 
-ISR(ADC_vect)
-{
+ISR(ADC_vect) {
   //Здесь можем смело читать micros_timer, не запрещая прерывания
   uint8_t getTCNT2 = TCNT2;
   getTCNT2 >>= 1; // Делим на 2
@@ -88,6 +87,13 @@ void UART_putc(unsigned char data) {
     // wait for transmit buffer to be empty
     if (data == '\n')
         UART_putc('\r'); //Windows (DOS)-like line ending
+    while(!(UCSR0A & (1 << UDRE0)));
+    // load data into transmit register
+    UDR0 = data;
+}
+
+void UART_putc_bin(unsigned char data) {
+    // wait for transmit buffer to be empty
     while(!(UCSR0A & (1 << UDRE0)));
     // load data into transmit register
     UDR0 = data;
@@ -165,19 +171,13 @@ int main() {
   adc_result.data = 0;
   adc_result.notSent = 0;
   UART_Init();
-  timer_init(); 
+  UART_puts_P("***START OF FILE***\n"
+              "***BINARY DATA***\n");
+  //timer_init(); 
   ADC_Init();
-  UART_puts_P("Hello!\n");
   while(1) {
     if (adc_result.notSent) {
-      adc_result.notSent = 0;
-      cli();
-      ADC_result adc_result_c = adc_result;
-      sei();
-      UART_puts(utoa_fast_div(adc_result_c.micros, str_buf));
-      UART_puts_P("    ");
-      UART_puts(utoa_fast_div(adc_result_c.data, str_buf));
-      UART_putc('\n');
+      UART_putc_bin(adc_result.data);
     }
   }
 }
