@@ -11,15 +11,56 @@
 #define UART_puts_P(__strP) UART_puts_p(PSTR(__strP)) //Вывод строк напрямую из памяти прошивки, минуя стек.
 
 typedef struct {
+  uint32_t micros;
   uint8_t data;
   uint8_t notSent;
 } ADC_result;
 
+typedef struct
+{
+    uint32_t quot;
+    uint8_t rem;
+} divmod10_t;
+
+static volatile uint32_t micros_timer;
 static volatile ADC_result adc_result;
+static char str_buf[32];
+
+ISR (TIMER2_OVF_vect) {
+   uint32_t m = micros_timer;
+   ++m;
+   micros_timer = m;
+}
 
 ISR(ADC_vect) {
+  //Здесь можем смело читать micros_timer, не запрещая прерывания
+  uint8_t getTCNT2 = TCNT2;
+  getTCNT2 >>= 1; // Делим на 2
+  //micros_timer нужно сдвинуть на байт влево, а затем вернуть на бит вправо для деления на 2
+  adc_result.micros = (micros_timer << 7) + getTCNT2;
   adc_result.data = ADCH;
   adc_result.notSent = 1;
+}
+
+void timer_init(void) {
+   cli();
+  //Timer2 Init
+  //Считать время в микросекундах, вызывая прервания 
+  //каждую микросекунду - плохая идея.
+  //Микроконтроллер будет все время занят подсчетом количества микросекунд
+  //Заметим, что регистр TCNT2 предоставляет прямой доступ, как для чтения, 
+  //так и для записи, к 8-разрядному счетчику.
+  //Его можно считать дополнительным байтом. 
+  //Количество микросекунд будем находить сдвигом счетчика переполнения
+  //таймера на 8 бит влево,
+  //а затем прибавлять значение регистра TCNT2.
+  //Необходимое значение делителя равно 8.
+  //Получим количество микросекунд, умноженное на 2
+   micros_timer = 0;
+   TCCR2B = 0b00000010;  // x8
+   TCCR2A = 0b00000000;  //Normal mode
+   TIMSK2 |= (1<<TOIE2);
+   sei();
 }
 
 void UART_Init() {
@@ -51,7 +92,7 @@ void UART_putc(unsigned char data) {
     UDR0 = data;
 }
 
-inline static void UART_putc_bin(unsigned char data) {
+void UART_putc_bin(unsigned char data) {
     // wait for transmit buffer to be empty
     while(!(UCSR0A & (1 << UDRE0)));
     // load data into transmit register
@@ -68,6 +109,41 @@ void UART_puts_p(const char* s) {
     // transmit character until NULL is reached
     while(pgm_read_byte(s) != 0)
       UART_putc(pgm_read_byte(s++));
+}
+
+inline static divmod10_t divmodu10(uint32_t n) {
+    divmod10_t res;
+// умножаем на 0.8
+    res.quot = n >> 1;
+    res.quot += res.quot >> 1;
+    res.quot += res.quot >> 4;
+    res.quot += res.quot >> 8;
+    res.quot += res.quot >> 16;
+    uint32_t qq = res.quot;
+// делим на 8
+    res.quot >>= 3;
+// вычисляем остаток
+    res.rem = (uint8_t)(n - ((res.quot << 1) + (qq & ~7ul)));
+// корректируем остаток и частное
+    if(res.rem > 9)
+    {
+        res.rem -= 10;
+        res.quot++;
+    }
+    return res;
+}
+
+char* utoa_fast_div(uint32_t value, char *buffer) {
+    buffer += 11;
+    *--buffer = 0;
+    do
+    {
+        divmod10_t res = divmodu10(value);
+        *--buffer = res.rem + '0';
+        value = res.quot;
+    }
+    while (value != 0);
+    return buffer;
 }
 
 void ADC_Init(void) {
@@ -90,11 +166,14 @@ void ADC_Init(void) {
 
 int main() {
   DDRC = 0x00; //Весь PORTC в режиме входа.
+  micros_timer = 0;
+  adc_result.micros = 0;
   adc_result.data = 0;
   adc_result.notSent = 0;
   UART_Init();
   UART_puts_P("***START OF FILE***\n"
-              "***BINARY DATA***\n"); 
+              "***BINARY DATA***\n");
+  //timer_init(); 
   ADC_Init();
   while(1) {
     if (adc_result.notSent) {
